@@ -1,8 +1,4 @@
-// Based on the guide below:
-// https://learn.vonage.com/blog/2020/03/13/using-jwt-for-authentication-in-a-golang-application-dr/
-// https://github.com/victorsteven/jwt-best-practices/blob/master/main.go
-
-package api
+package main
 
 import (
 	"encoding/json"
@@ -15,21 +11,25 @@ import (
 
 	"github.com/go-chi/chi"
 	"github.com/go-chi/chi/middleware"
+	"github.com/go-redis/redis/v7"
+
 	"github.com/panospet/go-jwt-oauth2/jwt"
-	"github.com/panospet/go-jwt-oauth2/user"
+	"github.com/panospet/go-jwt-oauth2/jwt/authkeep"
 )
 
-type Api struct {
-	JwtManager *jwt.JwtManager
-}
+var JwtManager *jwt.JwtManager
 
-func NewApi(jwtManager *jwt.JwtManager) *Api {
-	return &Api{
-		JwtManager: jwtManager,
+func main() {
+	redisAddr := os.Getenv("REDIS_DSN")
+	if len(redisAddr) == 0 {
+		redisAddr = "localhost:6379"
 	}
-}
+	redisClient := redis.NewClient(&redis.Options{
+		Addr: redisAddr,
+	})
+	keeper := authkeep.NewRedisKeeper(redisClient)
+	JwtManager = jwt.NewJwtManager("access-secret", "refresh-secret", keeper)
 
-func (a *Api) Run() error {
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
@@ -39,16 +39,16 @@ func (a *Api) Run() error {
 	// no middleware group
 	r.Group(
 		func(r chi.Router) {
-			r.Post("/login", a.Login)
-			r.Post("/refresh", a.Refresh)
+			r.Post("/login", Login)
+			r.Post("/refresh", Refresh)
 		},
 	)
 
 	// middleware group
 	r.Group(
 		func(r chi.Router) {
-			r.Use(a.JwtMiddleware)
-			r.Post("/logout", a.Logout)
+			r.Use(JwtMiddleware)
+			r.Post("/logout", Logout)
 			r.Post("/task", DoTask)
 		},
 	)
@@ -58,59 +58,57 @@ func (a *Api) Run() error {
 		port = "5555"
 	}
 	log.Printf("listening on %s\n", port)
-	return http.ListenAndServe(port, r)
+	panic(http.ListenAndServe(fmt.Sprintf("0.0.0.0:%s", port), r))
 }
 
 var exampleUuid = "c9c65e83-8a93-4b8c-9be0-50914727c029"
-var user1 = user.User{
+var user = User{
 	ID:       exampleUuid,
 	Username: "username",
 	Password: "password",
 }
 
-type Response struct {
-	Message string `json:"message"`
-}
-
-func Resp(msg string) Response {
-	return Response{Message: msg}
-}
-
-func (a *Api) JwtMiddleware(next http.Handler) http.Handler {
+func JwtMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		tokenStr := ExtractTokenFromRequest(r)
-		if err := a.JwtManager.Authenticate(tokenStr); err != nil {
+		if err := JwtManager.Authenticate(tokenStr); err != nil {
 			log.Println(err)
-			JSON(w, r, http.StatusUnauthorized, Resp("unauthorized"))
+			JSON(w, r, http.StatusUnauthorized, Respond("unauthorized"))
 			return
 		}
 		next.ServeHTTP(w, r.WithContext(r.Context()))
 	})
 }
 
-func (a *Api) Login(w http.ResponseWriter, r *http.Request) {
-	var u user.User
+type User struct {
+	ID       string `json:"id"`
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+func Login(w http.ResponseWriter, r *http.Request) {
+	var u User
 	bod, err := io.ReadAll(r.Body)
 	defer r.Body.Close()
 	if err != nil {
-		JSON(w, r, http.StatusBadRequest, Resp("Invalid json provided"))
+		JSON(w, r, http.StatusBadRequest, Respond("Invalid json provided"))
 		return
 	}
 
 	if err := json.Unmarshal(bod, &u); err != nil {
-		JSON(w, r, http.StatusBadRequest, Resp("Invalid json provided"))
+		JSON(w, r, http.StatusBadRequest, Respond("Invalid json provided"))
 		return
 	}
 
-	// todo ask user repository
-	if user1.Username != u.Username || user1.Password != u.Password {
-		JSON(w, r, http.StatusBadRequest, Resp("Please provide valid login details"))
+	// assuming we search in database and find the user
+	if user.Username != u.Username || user.Password != u.Password {
+		JSON(w, r, http.StatusBadRequest, Respond("Please provide valid login details"))
 		return
 	}
 
-	ts, err := a.JwtManager.CreateAndStoreTokens(user1.ID)
+	ts, err := JwtManager.CreateAndStoreTokens(user.ID)
 	if err != nil {
-		JSON(w, r, http.StatusInternalServerError, Resp("cannot login"))
+		JSON(w, r, http.StatusInternalServerError, Respond("cannot login"))
 	}
 	tokens := map[string]string{
 		"access_token":  ts.AccessToken.Value,
@@ -119,23 +117,23 @@ func (a *Api) Login(w http.ResponseWriter, r *http.Request) {
 	JSON(w, r, http.StatusOK, tokens)
 }
 
-func (a *Api) Refresh(w http.ResponseWriter, r *http.Request) {
+func Refresh(w http.ResponseWriter, r *http.Request) {
 	mapToken := map[string]string{}
 
 	bod, err := io.ReadAll(r.Body)
 	if err != nil {
-		JSON(w, r, http.StatusBadRequest, Resp("bad json"))
+		JSON(w, r, http.StatusBadRequest, Respond("bad json"))
 		return
 	}
 	if err := json.Unmarshal(bod, &mapToken); err != nil {
-		JSON(w, r, http.StatusBadRequest, Resp("bad json"))
+		JSON(w, r, http.StatusBadRequest, Respond("bad json"))
 		return
 	}
 
 	refreshToken := mapToken["refresh_token"]
-	ts, err := a.JwtManager.RefreshTokens(refreshToken)
+	ts, err := JwtManager.RefreshTokens(refreshToken)
 	if err != nil {
-		JSON(w, r, http.StatusUnauthorized, Resp("refresh expired"))
+		JSON(w, r, http.StatusUnauthorized, Respond("refresh expired"))
 		return
 	}
 	tokens := map[string]string{
@@ -153,21 +151,21 @@ func DoTask(w http.ResponseWriter, r *http.Request) {
 	var task Task
 	b, err := io.ReadAll(r.Body)
 	if err != nil {
-		JSON(w, r, http.StatusBadRequest, Resp("invalid json"))
+		JSON(w, r, http.StatusBadRequest, Respond("invalid json"))
 		return
 	}
 	defer r.Body.Close()
 	if err := json.Unmarshal(b, &task); err != nil {
-		JSON(w, r, http.StatusBadRequest, Resp("invalid json"))
+		JSON(w, r, http.StatusBadRequest, Respond("invalid json"))
 		return
 	}
-	JSON(w, r, http.StatusCreated, Resp(fmt.Sprintf("task %s done", task.Name)))
+	JSON(w, r, http.StatusCreated, Respond(fmt.Sprintf("task %s done", task.Name)))
 }
 
-func (a *Api) Logout(w http.ResponseWriter, r *http.Request) {
+func Logout(w http.ResponseWriter, r *http.Request) {
 	tokenStr := ExtractTokenFromRequest(r)
-	if err := a.JwtManager.DeAuthenticate(tokenStr); err != nil {
-		JSON(w, r, http.StatusUnauthorized, Resp("unauthorized"))
+	if err := JwtManager.DeAuthenticate(tokenStr); err != nil {
+		JSON(w, r, http.StatusUnauthorized, Respond("unauthorized"))
 		return
 	}
 	JSON(w, r, http.StatusOK, nil)
@@ -180,6 +178,14 @@ func ExtractTokenFromRequest(r *http.Request) string {
 		return strArr[1]
 	}
 	return ""
+}
+
+type Response struct {
+	Message string `json:"message"`
+}
+
+func Respond(msg string) Response {
+	return Response{Message: msg}
 }
 
 func JSON(w http.ResponseWriter, r *http.Request, statusCode int, content interface{}) {
