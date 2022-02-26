@@ -61,13 +61,6 @@ func main() {
 	panic(http.ListenAndServe(fmt.Sprintf("0.0.0.0:%s", port), r))
 }
 
-var exampleUuid = "c9c65e83-8a93-4b8c-9be0-50914727c029"
-var user = User{
-	ID:       exampleUuid,
-	Username: "username",
-	Password: "password",
-}
-
 func JwtMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		tokenStr := ExtractTokenFromRequest(r)
@@ -101,12 +94,12 @@ func Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// assuming we search in database and find the user
-	if user.Username != u.Username || user.Password != u.Password {
+	if exampleUser.Username != u.Username || exampleUser.Password != u.Password {
 		JSON(w, r, http.StatusBadRequest, Respond("Please provide valid login details"))
 		return
 	}
 
-	ts, err := JwtManager.CreateAndStoreTokens(user.ID)
+	ts, err := JwtManager.CreateAndStoreTokens(exampleUser.ID)
 	if err != nil {
 		JSON(w, r, http.StatusInternalServerError, Respond("cannot login"))
 	}
@@ -195,4 +188,10 @@ func JSON(w http.ResponseWriter, r *http.Request, statusCode int, content interf
 		log.Println("failed to marshal ErrorResp:", err)
 		w.WriteHeader(http.StatusInternalServerError)
 	}
+}
+
+var exampleUser = User{
+	ID:       "c9c65e83-8a93-4b8c-9be0-50914727c029",
+	Username: "username",
+	Password: "password",
 }
