@@ -12,36 +12,20 @@ type RedisKeeper struct {
 	RedisClient *redis.Client
 }
 
-type Access struct {
-	Uuid   string
-	UserId string
-}
-
-type Token struct {
-	Value   string
-	Uuid    string
-	Expires int64
-}
-
-type Auth struct {
-	AccessToken  Token
-	RefreshToken Token
-}
-
 func NewRedisKeeper(redisClient *redis.Client) *RedisKeeper {
 	return &RedisKeeper{RedisClient: redisClient}
 }
 
-func (a *RedisKeeper) CreateAuth(userid string, auth Auth) error {
-	at := time.Unix(auth.AccessToken.Expires, 0) //converting Unix to UTC(to Time object)
-	rt := time.Unix(auth.RefreshToken.Expires, 0)
+func (a *RedisKeeper) AddAuth(userid string, tokens JwtTokens) error {
+	at := time.Unix(tokens.AccessToken.Expires, 0) //converting Unix to UTC(to Time object)
+	rt := time.Unix(tokens.RefreshToken.Expires, 0)
 	now := time.Now()
 
-	errAccess := a.RedisClient.Set(auth.AccessToken.Uuid, userid, at.Sub(now)).Err()
+	errAccess := a.RedisClient.Set(tokens.AccessToken.Uuid, userid, at.Sub(now)).Err()
 	if errAccess != nil {
 		return errAccess
 	}
-	errRefresh := a.RedisClient.Set(auth.RefreshToken.Uuid, userid, rt.Sub(now)).Err()
+	errRefresh := a.RedisClient.Set(tokens.RefreshToken.Uuid, userid, rt.Sub(now)).Err()
 	if errRefresh != nil {
 		return errRefresh
 	}

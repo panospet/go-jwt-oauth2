@@ -7,24 +7,24 @@ package api
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/dgrijalva/jwt-go"
 	"github.com/go-chi/chi"
 	"github.com/go-chi/chi/middleware"
-	"github.com/panospet/go-jwt-oauth2/api/authkeep"
-	user2 "github.com/panospet/go-jwt-oauth2/user"
-	"github.com/panospet/go-jwt-oauth2/utl"
+	"github.com/panospet/go-jwt-oauth2/jwt"
+	"github.com/panospet/go-jwt-oauth2/user"
+	"github.com/panospet/go-jwt-oauth2/util"
 	"io"
 	"log"
 	"net/http"
+	"strings"
 )
 
 type Api struct {
-	AuthKeeper authkeep.Keeper
+	JwtManager *jwt.JwtManager
 }
 
-func NewApi(authKeeper authkeep.Keeper) *Api {
+func NewApi(jwtManager *jwt.JwtManager) *Api {
 	return &Api{
-		AuthKeeper: authKeeper,
+		JwtManager: jwtManager,
 	}
 }
 
@@ -40,7 +40,6 @@ func (a *Api) Run() error {
 		func(r chi.Router) {
 			r.Post("/login", a.Login)
 			r.Post("/refresh", a.Refresh)
-			r.Post("/logout", a.Logout)
 		},
 	)
 
@@ -48,18 +47,18 @@ func (a *Api) Run() error {
 	r.Group(
 		func(r chi.Router) {
 			r.Use(a.JwtMiddleware)
-
+			r.Post("/logout", a.Logout)
 			r.Post("/task", DoTask)
 		},
 	)
 
-	port := utl.EnvOrDefault("PORT", ":5555")
+	port := util.EnvOrDefault("PORT", ":5555")
 	log.Printf("listening on %s\n", port)
 	return http.ListenAndServe(port, r)
 }
 
 var exampleUuid = "c9c65e83-8a93-4b8c-9be0-50914727c029"
-var user = user2.User{
+var user1 = user.User{
 	ID:       exampleUuid,
 	Username: "username",
 	Password: "password",
@@ -73,8 +72,20 @@ func Resp(msg string) Response {
 	return Response{Message: msg}
 }
 
+func (a *Api) JwtMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tokenStr := ExtractTokenFromRequest(r)
+		if err := a.JwtManager.Authenticate(tokenStr); err != nil {
+			log.Println(err)
+			JSON(w, r, http.StatusUnauthorized, Resp("unauthorized"))
+			return
+		}
+		next.ServeHTTP(w, r.WithContext(r.Context()))
+	})
+}
+
 func (a *Api) Login(w http.ResponseWriter, r *http.Request) {
-	var u user2.User
+	var u user.User
 	bod, err := io.ReadAll(r.Body)
 	defer r.Body.Close()
 	if err != nil {
@@ -87,24 +98,15 @@ func (a *Api) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// compare the user from the request, with the one we defined:
 	// todo ask user repository
-	if user.Username != u.Username || user.Password != u.Password {
+	if user1.Username != u.Username || user1.Password != u.Password {
 		JSON(w, r, http.StatusBadRequest, Resp("Please provide valid login details"))
 		return
 	}
 
-	ts, err := CreateToken(user.ID)
+	ts, err := a.JwtManager.CreateAndStoreTokens(user1.ID)
 	if err != nil {
-		log.Println(err)
-		JSON(w, r, http.StatusInternalServerError, Resp("cannot create token"))
-		return
-	}
-
-	if err := a.AuthKeeper.CreateAuth(user.ID, ts); err != nil {
-		log.Println(err)
-		JSON(w, r, http.StatusInternalServerError, Resp("create auth err"))
-		return
+		JSON(w, r, http.StatusInternalServerError, Resp("cannot login"))
 	}
 	tokens := map[string]string{
 		"access_token":  ts.AccessToken.Value,
@@ -127,60 +129,16 @@ func (a *Api) Refresh(w http.ResponseWriter, r *http.Request) {
 	}
 
 	refreshToken := mapToken["refresh_token"]
-
-	//verify the token
-	token, err := jwt.Parse(refreshToken, func(token *jwt.Token) (interface{}, error) {
-		//Make sure that the token method conform to "SigningMethodHMAC"
-		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
-		}
-		return []byte(refreshSecret), nil
-	})
-	//if there is an error, the token must have expired
+	ts, err := a.JwtManager.RefreshTokens(refreshToken)
 	if err != nil {
-		log.Println(err)
-		JSON(w, r, http.StatusUnauthorized, Resp("invalid token"))
-		return
-	}
-	//is token valid?
-	if _, ok := token.Claims.(jwt.Claims); !ok && !token.Valid {
-		JSON(w, r, http.StatusUnauthorized, Resp("invalid token"))
-		return
-	}
-	//Since token is valid, get the uuid:
-	claims, ok := token.Claims.(jwt.MapClaims) //the token claims should conform to MapClaims
-	if ok && token.Valid {
-		refreshUuid, ok := claims["refresh_uuid"].(string) //convert the interface to string
-		if !ok {
-			JSON(w, r, http.StatusUnprocessableEntity, Resp(err.Error()))
-			return
-		}
-		userId := claims["user_id"].(string)
-		//Delete the previous Refresh Token
-		deleted, delErr := a.AuthKeeper.DeleteAuthByUuid(refreshUuid)
-		if delErr != nil || deleted == 0 { //if any goes wrong
-			JSON(w, r, http.StatusUnauthorized, Resp("unauthorized"))
-			return
-		}
-		//Create new pairs of refresh and access tokens
-		ts, err := CreateToken(userId)
-		if err != nil {
-			JSON(w, r, http.StatusForbidden, err.Error())
-			return
-		}
-		//save the tokens metadata to redis
-		if err := a.AuthKeeper.CreateAuth(userId, ts); err != nil {
-			JSON(w, r, http.StatusForbidden, Resp(err.Error()))
-			return
-		}
-		tokens := map[string]string{
-			"access_token":  ts.AccessToken.Value,
-			"refresh_token": ts.RefreshToken.Value,
-		}
-		JSON(w, r, http.StatusCreated, tokens)
-	} else {
 		JSON(w, r, http.StatusUnauthorized, Resp("refresh expired"))
+		return
 	}
+	tokens := map[string]string{
+		"access_token":  ts.AccessToken.Value,
+		"refresh_token": ts.RefreshToken.Value,
+	}
+	JSON(w, r, http.StatusCreated, tokens)
 }
 
 type Task struct {
@@ -189,33 +147,35 @@ type Task struct {
 
 func DoTask(w http.ResponseWriter, r *http.Request) {
 	var task Task
-
 	b, err := io.ReadAll(r.Body)
 	if err != nil {
 		JSON(w, r, http.StatusBadRequest, Resp("invalid json"))
 		return
 	}
-
+	defer r.Body.Close()
 	if err := json.Unmarshal(b, &task); err != nil {
 		JSON(w, r, http.StatusBadRequest, Resp("invalid json"))
 		return
 	}
-
 	JSON(w, r, http.StatusCreated, Resp(fmt.Sprintf("task %s done", task.Name)))
 }
 
 func (a *Api) Logout(w http.ResponseWriter, r *http.Request) {
-	metadata, err := ExtractAccess(r)
-	if err != nil {
+	tokenStr := ExtractTokenFromRequest(r)
+	if err := a.JwtManager.DeAuthenticate(tokenStr); err != nil {
 		JSON(w, r, http.StatusUnauthorized, Resp("unauthorized"))
 		return
 	}
-	delErr := a.AuthKeeper.DeleteByAccess(metadata)
-	if delErr != nil {
-		JSON(w, r, http.StatusUnauthorized, delErr.Error())
-		return
-	}
 	JSON(w, r, http.StatusOK, nil)
+}
+
+func ExtractTokenFromRequest(r *http.Request) string {
+	bearToken := r.Header.Get("Authorization")
+	strArr := strings.Split(bearToken, " ")
+	if len(strArr) == 2 {
+		return strArr[1]
+	}
+	return ""
 }
 
 func JSON(w http.ResponseWriter, r *http.Request, statusCode int, content interface{}) {
