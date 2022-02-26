@@ -7,15 +7,16 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"io"
+	"log"
+	"net/http"
+	"os"
+	"strings"
+
 	"github.com/go-chi/chi"
 	"github.com/go-chi/chi/middleware"
 	"github.com/panospet/go-jwt-oauth2/jwt"
 	"github.com/panospet/go-jwt-oauth2/user"
-	"github.com/panospet/go-jwt-oauth2/util"
-	"io"
-	"log"
-	"net/http"
-	"strings"
 )
 
 type Api struct {
@@ -52,7 +53,10 @@ func (a *Api) Run() error {
 		},
 	)
 
-	port := util.EnvOrDefault("PORT", ":5555")
+	port := os.Getenv("PORT")
+	if len(port) == 0 {
+		port = "5555"
+	}
 	log.Printf("listening on %s\n", port)
 	return http.ListenAndServe(port, r)
 }

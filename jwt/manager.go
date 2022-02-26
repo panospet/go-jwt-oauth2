@@ -2,10 +2,10 @@ package jwt
 
 import (
 	"fmt"
-	"github.com/dgrijalva/jwt-go"
+	"time"
+
 	"github.com/google/uuid"
 	"github.com/panospet/go-jwt-oauth2/jwt/authkeep"
-	"time"
 )
 
 type JwtManager struct {
