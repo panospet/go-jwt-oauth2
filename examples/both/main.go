@@ -10,12 +10,13 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/google"
+
 	"github.com/go-chi/chi"
 	"github.com/go-chi/chi/middleware"
 	"github.com/go-redis/redis/v7"
 	"github.com/google/uuid"
-	"golang.org/x/oauth2"
-	"golang.org/x/oauth2/google"
 
 	"github.com/panospet/go-jwt-oauth2/jwt"
 	"github.com/panospet/go-jwt-oauth2/jwt/authkeep"
@@ -23,23 +24,35 @@ import (
 )
 
 var (
-	googleOauth2Config *oauth2.Config
 	googleOauthHandler *myoauth.GoogleOAuthHandler
 )
-
-func init() {
-	googleOauth2Config = &oauth2.Config{
-		RedirectURL:  "http://localhost:8080/googleCallback",
-		ClientID:     os.Getenv("GOOGLE_CLIENT_ID"),
-		ClientSecret: os.Getenv("GOOGLE_CLIENT_SECRET"),
-		Scopes:       []string{"https://www.googleapis.com/auth/userinfo.email"},
-		Endpoint:     google.Endpoint,
-	}
-}
 
 var JwtManager *jwt.JwtManager
 
 func main() {
+	googleClientId := os.Getenv("GOOGLE_CLIENT_ID")
+	if len(googleClientId) == 0 {
+		log.Fatalln("GOOGLE_CLIENT_ID cannot be empty")
+	}
+	googleClientSecret := os.Getenv("GOOGLE_CLIENT_SECRET")
+	if len(googleClientSecret) == 0 {
+		log.Fatalln("GOOGLE_CLIENT_SECRET cannot be empty")
+	}
+	redirectUrl := os.Getenv("GOOGLE_REDIRECT_URL")
+	if len(redirectUrl) == 0 {
+		redirectUrl = "http://localhost:8080/googleCallback"
+	}
+	log.Printf("You have chosen google redirect url: %s. ", redirectUrl)
+	log.Printf("Make sure you have set this url in your Authorized redirect URIs section in Google Console API. " +
+		"More: https://developers.google.com/identity/protocols/oauth2\n")
+
+	googleOauth2Config := &oauth2.Config{
+		RedirectURL:  redirectUrl,
+		ClientID:     googleClientId,
+		ClientSecret: googleClientSecret,
+		Scopes:       []string{"https://www.googleapis.com/auth/userinfo.email"},
+		Endpoint:     google.Endpoint,
+	}
 	redisAddr := os.Getenv("REDIS_DSN")
 	if len(redisAddr) == 0 {
 		redisAddr = "localhost:6379"
@@ -47,6 +60,9 @@ func main() {
 	redisClient := redis.NewClient(&redis.Options{
 		Addr: redisAddr,
 	})
+	if resp := redisClient.Ping(); resp.Err() != nil {
+		log.Fatalf("could not ping redis: %s\n", resp.Err())
+	}
 	keeper := authkeep.NewRedisKeeper(redisClient)
 	JwtManager = jwt.NewJwtManager("access-secret", "refresh-secret", keeper)
 
