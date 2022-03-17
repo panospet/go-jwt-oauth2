@@ -6,6 +6,7 @@ import (
 
 	"github.com/dgrijalva/jwt-go"
 	"github.com/google/uuid"
+
 	"github.com/panospet/go-jwt-oauth2/jwt/authkeep"
 )
 

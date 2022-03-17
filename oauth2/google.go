@@ -4,10 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"golang.org/x/oauth2"
 	"io/ioutil"
 	"math/rand"
 	"net/http"
+
+	"golang.org/x/oauth2"
 )
 
 const (
