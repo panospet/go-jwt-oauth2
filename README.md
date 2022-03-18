@@ -14,11 +14,12 @@ This will be useful as an in-memory storage for your JWT tokens. For a different
 use environment variable `REDIS_DSN`. 
 
 Make sure you have google credentials for your application. 
-`GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` will be needed as environment variables.
+`GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` will be needed as environment variables. Also, `ACCESS_SECRET` and `REFRESH_SECRET` 
+should be declared (otherwise default values will be assigned).
 
 You can run the application by typing:
 ```shell
-GOOGLE_CLIENT_ID=xxx GOOGLE_CLIENT_SECRET=xxx go run examples/both/main.go
+GOOGLE_CLIENT_ID=xxx GOOGLE_CLIENT_SECRET=xxx ACCESS_SECRET=my-access-secret REFRESH_SECRET=my-refresh-secret go run examples/both/main.go
 ```
 
 ## It works!

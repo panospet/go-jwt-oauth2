@@ -64,7 +64,16 @@ func main() {
 		log.Fatalf("could not ping redis: %s\n", resp.Err())
 	}
 	keeper := authkeep.NewRedisKeeper(redisClient)
-	JwtManager = jwt.NewJwtManager("access-secret", "refresh-secret", keeper)
+
+	accessSecret := os.Getenv("ACCESS_SECRET")
+	if len(accessSecret) == 0 {
+		accessSecret = "access-secret"
+	}
+	refreshSecret := os.Getenv("REFRESH_SECRET")
+	if len(accessSecret) == 0 {
+		refreshSecret = "refresh-secret"
+	}
+	JwtManager = jwt.NewJwtManager(accessSecret, refreshSecret, keeper)
 
 	googleOauthHandler = myoauth.NewGoogleOAuthHandler(googleOauth2Config, &http.Client{
 		Timeout: 30 * time.Second,
