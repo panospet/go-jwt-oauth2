@@ -14,8 +14,9 @@ This will be useful as an in-memory storage for your JWT tokens. For a different
 use environment variable `REDIS_DSN`. 
 
 Make sure you have google credentials for your application. 
-`GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` will be needed as environment variables. Also, `ACCESS_SECRET` and `REFRESH_SECRET` 
-should be declared (otherwise default values will be assigned).
+`GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` will be needed as environment variables 
+(you can get them from [here](https://console.cloud.google.com/apis/credentials)). 
+Also, `ACCESS_SECRET` and `REFRESH_SECRET` should be declared (otherwise default values will be assigned).
 
 You can run the application by typing:
 ```shell
