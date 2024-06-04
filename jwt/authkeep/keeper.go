@@ -1,10 +1,14 @@
 package authkeep
 
+import (
+	"context"
+)
+
 type Keeper interface {
-	AddAuth(userid string, auth JwtTokens) error
-	FetchAuth(access Access) (string, error)
-	DeleteAuthByUuid(uuid string) (int64, error)
-	DeleteByAccess(access Access) error
+	AddAuth(ctx context.Context, userid string, auth JwtTokens) error
+	FetchAuth(ctx context.Context, access Access) (string, error)
+	DeleteAuthByUuid(ctx context.Context, uuid string) (int64, error)
+	DeleteByAccess(ctx context.Context, access Access) error
 }
 
 type Access struct {

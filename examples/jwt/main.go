@@ -9,9 +9,9 @@ import (
 	"os"
 	"strings"
 
-	"github.com/go-chi/chi"
-	"github.com/go-chi/chi/middleware"
-	"github.com/go-redis/redis/v7"
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
+	"github.com/redis/go-redis/v9"
 
 	"github.com/panospet/go-jwt-oauth2/jwt"
 	"github.com/panospet/go-jwt-oauth2/jwt/authkeep"
@@ -24,9 +24,11 @@ func main() {
 	if len(redisAddr) == 0 {
 		redisAddr = "localhost:6379"
 	}
-	redisClient := redis.NewClient(&redis.Options{
-		Addr: redisAddr,
-	})
+	redisClient := redis.NewClient(
+		&redis.Options{
+			Addr: redisAddr,
+		},
+	)
 	keeper := authkeep.NewRedisKeeper(redisClient)
 	JwtManager = jwt.NewJwtManager("access-secret", "refresh-secret", keeper)
 
@@ -62,15 +64,17 @@ func main() {
 }
 
 func JwtMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		tokenStr := ExtractTokenFromRequest(r)
-		if err := JwtManager.Authenticate(tokenStr); err != nil {
-			log.Println(err)
-			JSON(w, r, http.StatusUnauthorized, Respond("unauthorized"))
-			return
-		}
-		next.ServeHTTP(w, r.WithContext(r.Context()))
-	})
+	return http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			tokenStr := ExtractTokenFromRequest(r)
+			if err := JwtManager.Authenticate(r.Context(), tokenStr); err != nil {
+				log.Println(err)
+				JSON(w, r, http.StatusUnauthorized, Respond("unauthorized"))
+				return
+			}
+			next.ServeHTTP(w, r.WithContext(r.Context()))
+		},
+	)
 }
 
 type User struct {
@@ -99,7 +103,7 @@ func Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ts, err := JwtManager.CreateAndStoreTokens(exampleUser.ID)
+	ts, err := JwtManager.CreateAndStoreTokens(r.Context(), exampleUser.ID)
 	if err != nil {
 		JSON(w, r, http.StatusInternalServerError, Respond("cannot login"))
 	}
@@ -124,7 +128,7 @@ func Refresh(w http.ResponseWriter, r *http.Request) {
 	}
 
 	refreshToken := mapToken["refresh_token"]
-	ts, err := JwtManager.RefreshTokens(refreshToken)
+	ts, err := JwtManager.RefreshTokens(r.Context(), refreshToken)
 	if err != nil {
 		JSON(w, r, http.StatusUnauthorized, Respond("refresh expired"))
 		return
@@ -157,7 +161,7 @@ func DoTask(w http.ResponseWriter, r *http.Request) {
 
 func Logout(w http.ResponseWriter, r *http.Request) {
 	tokenStr := ExtractTokenFromRequest(r)
-	if err := JwtManager.DeAuthenticate(tokenStr); err != nil {
+	if err := JwtManager.DeAuthenticate(r.Context(), tokenStr); err != nil {
 		JSON(w, r, http.StatusUnauthorized, Respond("unauthorized"))
 		return
 	}

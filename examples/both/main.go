@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,12 +11,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/redis/go-redis/v9"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 
-	"github.com/go-chi/chi"
-	"github.com/go-chi/chi/middleware"
-	"github.com/go-redis/redis/v7"
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 	"github.com/google/uuid"
 
 	"github.com/panospet/go-jwt-oauth2/jwt"
@@ -43,8 +44,10 @@ func main() {
 		redirectUrl = "http://localhost:8080/googleCallback"
 	}
 	log.Printf("You have chosen google redirect url: %s. ", redirectUrl)
-	log.Printf("Make sure you have set this url in your Authorized redirect URIs section in Google Console API. " +
-		"More: https://developers.google.com/identity/protocols/oauth2\n")
+	log.Printf(
+		"Make sure you have set this url in your Authorized redirect URIs section in Google Console API. " +
+			"More: https://developers.google.com/identity/protocols/oauth2\n",
+	)
 
 	googleOauth2Config := &oauth2.Config{
 		RedirectURL:  redirectUrl,
@@ -57,10 +60,12 @@ func main() {
 	if len(redisAddr) == 0 {
 		redisAddr = "localhost:6379"
 	}
-	redisClient := redis.NewClient(&redis.Options{
-		Addr: redisAddr,
-	})
-	if resp := redisClient.Ping(); resp.Err() != nil {
+	redisClient := redis.NewClient(
+		&redis.Options{
+			Addr: redisAddr,
+		},
+	)
+	if resp := redisClient.Ping(context.Background()); resp.Err() != nil {
 		log.Fatalf("could not ping redis: %s\n", resp.Err())
 	}
 	keeper := authkeep.NewRedisKeeper(redisClient)
@@ -75,9 +80,11 @@ func main() {
 	}
 	JwtManager = jwt.NewJwtManager(accessSecret, refreshSecret, keeper)
 
-	googleOauthHandler = myoauth.NewGoogleOAuthHandler(googleOauth2Config, &http.Client{
-		Timeout: 30 * time.Second,
-	})
+	googleOauthHandler = myoauth.NewGoogleOAuthHandler(
+		googleOauth2Config, &http.Client{
+			Timeout: 30 * time.Second,
+		},
+	)
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
@@ -139,7 +146,7 @@ func googleCallbackHandler(w http.ResponseWriter, r *http.Request) {
 		ID:    uuid.New().String(),
 		Email: email.(string),
 	}
-	ts, err := JwtManager.CreateAndStoreTokens(user.ID)
+	ts, err := JwtManager.CreateAndStoreTokens(r.Context(), user.ID)
 	if err != nil {
 		log.Println(err)
 		JSON(w, r, http.StatusInternalServerError, Respond("cannot login"))
@@ -155,15 +162,17 @@ func googleCallbackHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func JwtMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		tokenStr := ExtractTokenFromRequest(r)
-		if err := JwtManager.Authenticate(tokenStr); err != nil {
-			log.Println(err)
-			JSON(w, r, http.StatusUnauthorized, Respond("unauthorized"))
-			return
-		}
-		next.ServeHTTP(w, r.WithContext(r.Context()))
-	})
+	return http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			tokenStr := ExtractTokenFromRequest(r)
+			if err := JwtManager.Authenticate(r.Context(), tokenStr); err != nil {
+				log.Println(err)
+				JSON(w, r, http.StatusUnauthorized, Respond("unauthorized"))
+				return
+			}
+			next.ServeHTTP(w, r.WithContext(r.Context()))
+		},
+	)
 }
 
 type User struct {
@@ -193,7 +202,7 @@ func Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ts, err := JwtManager.CreateAndStoreTokens(exampleUser.ID)
+	ts, err := JwtManager.CreateAndStoreTokens(r.Context(), exampleUser.ID)
 	if err != nil {
 		JSON(w, r, http.StatusInternalServerError, Respond("cannot login"))
 	}
@@ -218,7 +227,7 @@ func Refresh(w http.ResponseWriter, r *http.Request) {
 	}
 
 	refreshToken := mapToken["refresh_token"]
-	ts, err := JwtManager.RefreshTokens(refreshToken)
+	ts, err := JwtManager.RefreshTokens(r.Context(), refreshToken)
 	if err != nil {
 		JSON(w, r, http.StatusUnauthorized, Respond("refresh expired"))
 		return
@@ -251,7 +260,7 @@ func DoTask(w http.ResponseWriter, r *http.Request) {
 
 func Logout(w http.ResponseWriter, r *http.Request) {
 	tokenStr := ExtractTokenFromRequest(r)
-	if err := JwtManager.DeAuthenticate(tokenStr); err != nil {
+	if err := JwtManager.DeAuthenticate(r.Context(), tokenStr); err != nil {
 		JSON(w, r, http.StatusUnauthorized, Respond("unauthorized"))
 		return
 	}
